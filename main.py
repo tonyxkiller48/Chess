@@ -30,10 +30,17 @@ def run_web():
 # ==========================================
 
 # ================= Bot ====================
-app = Client("chess_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client(
+    "chess_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
+
 games = {}
 
-def create_engine(elo=2000):
+# ---------- Engine Creator ----------
+def create_engine(elo=1800):
     engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH)
     engine.configure({
         "UCI_LimitStrength": True,
@@ -41,60 +48,98 @@ def create_engine(elo=2000):
     })
     return engine
 
+# ---------- Start ----------
 @app.on_message(filters.command("start"))
 async def start(_, message: Message):
     await message.reply(
+        "♟ Welcome to Chess Bot\n\n"
         "Choose your side:\n"
         "/white\n"
         "/black\n\n"
-        "Set strength:\n"
+        "Set strength (optional):\n"
         "/elo 1600\n"
         "/elo 1800\n"
         "/elo 2200"
     )
 
+# ---------- Set ELO ----------
 @app.on_message(filters.command("elo"))
 async def set_elo(_, message: Message):
     user_id = message.from_user.id
+
     try:
         elo = int(message.command[1])
         if elo < 800 or elo > 3000:
             return await message.reply("Choose ELO between 800 - 3000")
 
         if user_id not in games:
-            games[user_id] = {"board": chess.Board(), "color": chess.WHITE}
+            games[user_id] = {
+                "board": chess.Board(),
+                "color": chess.WHITE,
+                "elo": elo
+            }
+        else:
+            games[user_id]["elo"] = elo
 
-        games[user_id]["elo"] = elo
-        await message.reply(f"Engine strength set to {elo}")
+        await message.reply(f"🤖 Engine strength set to {elo}")
+
     except:
         await message.reply("Usage: /elo 1800")
 
+# ---------- Choose White ----------
 @app.on_message(filters.command("white"))
 async def white(_, message: Message):
-    games[message.from_user.id] = {
+    user_id = message.from_user.id
+
+    games[user_id] = {
         "board": chess.Board(),
         "color": chess.WHITE,
         "elo": 1800
     }
-    await message.reply("♟ Game started. You are White. Default ELO 1800.")
 
+    await message.reply("♟ Game started. You are White.")
+
+    # Auto first move because White starts
+    board = games[user_id]["board"]
+    engine = create_engine(games[user_id]["elo"])
+
+    result = engine.analyse(board, chess.engine.Limit(depth=15))
+    best_move_obj = result["pv"][0]
+    best_move = board.san(best_move_obj)
+
+    board.push(best_move_obj)
+    score = result["score"].relative
+    engine.quit()
+
+    await message.reply(
+        f"♟ My first move: {best_move}\n"
+        f"📊 Eval: {score}"
+    )
+
+# ---------- Choose Black ----------
 @app.on_message(filters.command("black"))
 async def black(_, message: Message):
-    games[message.from_user.id] = {
+    user_id = message.from_user.id
+
+    games[user_id] = {
         "board": chess.Board(),
         "color": chess.BLACK,
         "elo": 1800
     }
-    await message.reply("♟ Game started. You are Black. Default ELO 1800.")
 
+    await message.reply("♟ Game started. You are Black.\nWaiting for opponent move.")
+
+# ---------- New Game ----------
 @app.on_message(filters.command("new"))
 async def new_game(_, message: Message):
     games.pop(message.from_user.id, None)
-    await message.reply("Game reset.")
+    await message.reply("Game reset. Use /white or /black")
 
+# ---------- Show Board ----------
 @app.on_message(filters.command("board"))
 async def show_board(_, message: Message):
     user_id = message.from_user.id
+
     if user_id not in games:
         return await message.reply("Start game first.")
 
@@ -114,7 +159,10 @@ async def show_board(_, message: Message):
 
     await message.reply_photo(bio)
 
-@app.on_message(filters.text & ~filters.command(["start","white","black","new","board","elo"]))
+# ---------- Handle Opponent Move ----------
+@app.on_message(filters.text & ~filters.command(
+    ["start","white","black","new","board","elo"]
+))
 async def handle_move(_, message: Message):
     user_id = message.from_user.id
 
@@ -123,8 +171,9 @@ async def handle_move(_, message: Message):
 
     board = games[user_id]["board"]
     user_color = games[user_id]["color"]
-    elo = games[user_id].get("elo", 1800)
+    elo = games[user_id]["elo"]
 
+    # If it's engine's turn, block user
     if board.turn == user_color:
         return await message.reply("Waiting for opponent move.")
 
@@ -136,6 +185,7 @@ async def handle_move(_, message: Message):
     if board.is_game_over():
         return await message.reply("Game Over.")
 
+    # Engine move
     if board.turn == user_color:
         engine = create_engine(elo)
         result = engine.analyse(board, chess.engine.Limit(depth=15))
@@ -143,7 +193,6 @@ async def handle_move(_, message: Message):
         best_move = board.san(best_move_obj)
 
         board.push(best_move_obj)
-
         score = result["score"].relative
         engine.quit()
 
