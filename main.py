@@ -183,6 +183,25 @@ async def show_board(_, message: Message):
     bio.name = "board.png"
     await message.reply_photo(bio)
 
+@app.on_message(filters.command("undo"))
+async def undo(_, message: Message):
+    user_id = message.from_user.id
+
+    if user_id not in games:
+        return await message.reply("No game running.")
+
+    board = games[user_id]["board"]
+
+    if len(board.move_stack) == 0:
+        return await message.reply("Nothing to undo.")
+
+    board.pop()
+
+    if len(board.move_stack) > 0:
+        board.pop()
+
+    await message.reply("Last move undone. Enter opponent move again.")
+
 @app.on_message(filters.command("win"))
 async def win_probability(_, message: Message):
     user_id = message.from_user.id
