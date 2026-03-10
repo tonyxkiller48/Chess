@@ -1,6 +1,7 @@
 import os
 import io
 import math
+import json
 import threading
 import chess
 import chess.engine
@@ -40,7 +41,86 @@ engine.configure({
 })
 
 games = {}
+word_solver = {}
 
+with open("all-five.json") as f:
+    WORDS = json.load(f)
+
+def filter_words(words, guess, pattern):
+    result = []
+    for word in words:
+        ok = True
+        for i in range(5):
+            g = guess[i]
+            p = pattern[i]
+            if p == "g":
+                if word[i] != g:
+                    ok = False
+                    break
+            elif p == "y":
+                if g not in word or word[i] == g:
+                    ok = False
+                    break
+            elif p == "r":
+                if g in word:
+                    ok = False
+                    break
+        if ok:
+            result.append(word)
+    return result
+
+def rank_words(words):
+    freq = {}
+    for w in words:
+        for c in set(w):
+            freq[c] = freq.get(c, 0) + 1
+    scores = []
+    for w in words:
+        s = 0
+        used = set()
+        for c in w:
+            if c not in used:
+                s += freq.get(c, 0)
+                used.add(c)
+        scores.append((w, s))
+    scores.sort(key=lambda x: x[1], reverse=True)
+    return [w for w, s in scores]
+
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply("WordSeek Solver\nUse /newsolve to begin")
+
+@app.on_message(filters.command("newsolve"))
+async def newsolve(client, message):
+    word_solver[message.from_user.id] = WORDS.copy()
+    await message.reply("Send guesses like:\ncrane ryrgr\nMultiple lines allowed")
+
+@app.on_message(filters.text)
+async def solve(client, message):
+    uid = message.from_user.id
+    if uid not in word_solver:
+        return
+    words = word_solver[uid]
+    lines = message.text.lower().splitlines()
+    try:
+        for line in lines:
+            guess, pattern = line.split()
+            if len(guess) != 5 or len(pattern) != 5:
+                return
+            words = filter_words(words, guess, pattern)
+        word_solver[uid] = words
+        if not words:
+            await message.reply("No possible words")
+            return
+        ranked = rank_words(words)
+        top = ranked[:10]
+        text = "Remaining: " + str(len(words)) + "\n\nBest Guesses:\n"
+        for i, w in enumerate(top, 1):
+            text += str(i) + ". " + w + "\n"
+        await message.reply(text)
+    except:
+        await message.reply("Format example:\ncrane ryrgr")
+        
 def eval_to_winrate(score):
     if score.is_mate():
         return 100.0 if score.mate() > 0 else 0.0
@@ -59,7 +139,7 @@ def get_game_result(board):
     elif board.is_insufficient_material():
         return "🤝 Draw by insufficient material."
     elif board.can_claim_threefold_repetition():
-        return "🤝 Draw by repetition."
+       return "🤝 Draw by repetition."
     elif board.can_claim_fifty_moves():
         return "🤝 Draw by 50-move rule."
     return None
